@@ -1,0 +1,24 @@
+Name,Short Code,Functional Group
+Hard Coral (branching),C_branch,Hard coral
+Hard coral,HC,Hard coral
+Hard Coral (encrusting),HC_encr,Hard coral
+Hard Coral (massive),HC_massive,Hard coral
+Porites (branching),Por_branch,Hard coral
+Echinoderms: sea urchin: regular urchins,EURR,Other Invertebrates
+Holothuroidea,HOL,Other Invertebrates
+Soft Coral,SC,Other Invertebrates
+Sponge,SP,Other Invertebrates
+Mud,Mud,Soft Substrate
+Sand,Sand,Soft Substrate
+Shell hash/Gravel,ShellHash,Soft Substrate
+Dead coral,D_coral,Hard Substrate
+Rock,Rock,Hard Substrate
+No Data,NODATA,Other
+Others,OTH,Other
+Rubble,Rubble,Other
+Algae (fleshy),AL_fleshy,Algae
+CCA (crustose coralline algae),CCA,Algae
+Halimeda,Halimeda,Algae
+Turf algae,Turf,Algae
+Seagrass,Seagrass,Seagrass
+C_branch + HC + HC_encr + HC_massive + Por_branch,Coral,Hard coral

@@ -1,0 +1,1050 @@
+---
+title: "Monitoring Stations"
+format: html
+---
+
+
+
+## Introduction
+
+This interactive map displays monitoring stations established for benthic ecological surveys along the coastal waters of Tanzania. Benthic ecosystems form the foundation of marine biodiversity and productivity, supporting critical habitats including coral reefs, seagrass beds, and soft-sediment communities. 
+
+The monitoring stations shown here represent key sampling locations used to assess and track the health and biodiversity of these vital seafloor communities. By visualizing station locations within defined monitoring zones, this tool enables stakeholders to explore spatial patterns in benthic data and supports evidence-based coastal management and conservation efforts.
+
+Use the interactive features to:
+- Toggle between different map layers (satellite imagery, street maps)
+- Explore monitoring zones and station locations
+- Draw custom areas of interest
+- Export your annotations as GeoJSON files
+
+
+```{r}
+require(sf)
+require(tidyverse)
+require(gt)
+require(leaflet)
+require(leaflet.extras)
+require(leafpop)
+
+```
+
+
+## Monitoring Stations
+
+The map below provides a comprehensive spatial overview of the established monitoring network. Each station is categorized by its respective management zone, with interactive markers providing real-time insights into ecological indicators such as coral cover percentages and bleaching severity levels. This spatial distribution is critical for identifying vulnerable hotspots and ensuring that conservation resources are allocated effectively across the diverse marine landscapes of Tanzania.
+
+
+```{r}
+stations = read_csv('monitoring_stations.csv') |> 
+    janitor::clean_names() |> 
+    mutate(
+        cover_pct = sample(10:90, n(), replace = TRUE),
+        bleaching_level = sample(c("Low", "Moderate", "High", "Severe"), n(), replace = TRUE)
+           )
+    # |> 
+    # mutate(zone = str_remove_all(zone, 'ZONE'))
+
+stations_sf =  stations |> 
+    st_as_sf(
+        coords = c('lon', 'lat'), 
+        crs = 4326, 
+        remove = FALSE
+        )
+
+# stations_sf |> st_write('monitoring_stations.gpkg', append = FALSE)    
+
+```
+
+```{r}
+zones = st_read('monitoring_zones.gpkg') |> 
+    mutate(zone = str_replace_all(zone, 'Zone', 'ZONE'))
+```
+
+
+```{r}
+pal <- colorFactor(palette = "Set2", domain = stations_sf$zone)
+
+leaflet(stations_sf)  |>
+    addProviderTiles(providers$OpenStreetMap, group = "OSM")  |> 
+    addProviderTiles(providers$Esri.WorldImagery, group = "Satellite")|> 
+    addProviderTiles(providers$CartoDB.Positron, group = "Light") |> 
+    addScaleBar(position = "bottomleft") |>
+    addFullscreenControl() |>
+    addMeasure(
+        position = "bottomleft",
+        primaryLengthUnit = "kilometers", secondaryLengthUnit = "meters",
+        primaryAreaUnit = "sqmeters", secondaryAreaUnit = "hectares",
+        activeColor = "#2c3e50",
+        completedColor = "#e74c3c",
+        localization = "en",
+        captureZIndex = 10000
+        ) |> 
+    addDrawToolbar(
+        targetGroup = "draw",
+        editOptions = editToolbarOptions(edit = TRUE, remove = TRUE),
+        polylineOptions = drawPolylineOptions(),
+        polygonOptions = drawPolygonOptions(),
+        circleOptions = drawCircleOptions(),
+        rectangleOptions = drawRectangleOptions(),
+        markerOptions = drawMarkerOptions(),
+        circleMarkerOptions = drawCircleMarkerOptions()
+        ) |>
+    addMiniMap(tiles = providers$CartoDB.Positron, toggleDisplay = TRUE) |> 
+    addEasyButton(easyButton(
+        icon="fa-crosshairs", title="Locate Me",
+        onClick=JS("function(btn, map){ map.locate({setView: true}); }"))) |> 
+    addEasyButton(easyButton(
+        icon="fa-globe", title="Reset View",
+        onClick=JS("function(btn, map){ map.setView([-6.5, 39.3], 8); }")))  |> 
+    addPolygons(
+        data = zones,
+        fillColor = ~pal(zone),
+        fillOpacity = 0.2,
+        weight = 2,
+        color = "black",
+        label = ~zone,
+        group = "Zones"
+    ) |> 
+    addCircleMarkers(
+        fillColor = ~pal(zone), 
+        group = 'Station',
+        fillOpacity = 0.8,
+        color = "white",
+        weight = 2,
+        radius = 8,
+        label = ~station,
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "3px 8px"),
+            textsize = "15px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header'>", station, "</div>",
+            "<div class='popup-content'>",
+            "<div class='popup-row'><span class='popup-label'>📍 Location:</span> <span class='popup-value'>", location, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🏷️ MMA:</span> <span class='popup-value'>", mma, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌍 Zone:</span> <span class='popup-value'>", zone, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Longitude:</span> <span class='popup-value'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Latitude:</span> <span class='popup-value'>", round(lat, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌡️ Bleaching:</span> <span class='popup-value' style='color:", 
+                case_when(
+                    bleaching_level == "Low" ~ "#27ae60",
+                    bleaching_level == "Moderate" ~ "#f3d912ff",
+                    bleaching_level == "High" ~ "#f8a11fff",
+                    bleaching_level == "Severe" ~ "#e74c3c",
+                    TRUE ~ "#0c0d0dff"
+                ), "; font-weight:bold;'>", bleaching_level, "</span></div>",
+            "<div class='popup-row' style='margin-top:2px; margin-bottom:10px;'>",
+                "<div style='display:flex; width:100%; height:10px; background:#eee; border-radius:4px; overflow:hidden; border:1px solid #ddd;'>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Low", "#27ae60", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Moderate", "#f39c12", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="High", "#e67e22", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Severe", "#e74c3c", "#eee"), ";'></div>",
+                "</div>",
+            "</div>",
+            "<div class='popup-row' style='margin-top:10px; flex-direction:column; align-items:flex-start;'>",
+                "<span class='popup-label'>🌿 Coral Cover: ", cover_pct, "%</span>",
+                "<div style='background:#eee; border-radius:10px; width:100%; height:12px; margin-top:5px;'>",
+                    "<div style='background:", 
+                        ifelse(cover_pct <= 30, "#e74c3c", 
+                        ifelse(cover_pct <= 70, "#f39c12", "#27ae60")), 
+                        "; width:", cover_pct, "%; height:100%; border-radius:10px;'>",
+                    "</div>",
+                "</div>",
+            "</div>",
+            "</div></div>"
+        )
+    ) |>
+    addLegend(
+        pal = pal, 
+        values = ~zone, 
+        title = "Zone",
+        position = "bottomright",
+        opacity = 1
+    ) |> 
+    addLayersControl(
+        baseGroups = c("OSM", "Satellite", "Light"),
+        overlayGroups = c("Station", "Zones"),
+        options = layersControlOptions(collapsed = FALSE)
+    )  |> 
+    addSearchFeatures(
+        targetGroup = "Station",
+        options = searchFeaturesOptions(
+            zoom = 12, 
+            openPopup = TRUE
+        )
+        ) |> 
+    clearSearchFeatures() |>
+    htmlwidgets::onRender("
+        function(el, x) {
+            var map = this;
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            map.on('draw:created', function (e) {
+                drawnItems.addLayer(e.layer);
+            });
+            L.easyButton('fa-download', function(btn, map){
+                var data = drawnItems.toGeoJSON();
+                var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'drawn_polygons.geojson';
+                a.click();
+            }, 'Export Drawn Polygons').addTo(map);
+        }
+    ") |>
+    htmlwidgets::onRender("
+        function(el, x) {
+            var style = document.createElement('style');
+            style.textContent = `
+                .station-popup {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: #ffffff;
+                    border-radius: 8px;
+                    padding: 15px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    min-width: 250px;
+                }
+                
+                .popup-header {
+                    font-size: 30px;
+                    font-weight: bold;
+                    color: #2c3e50;
+                    padding-bottom: 10px;
+                    border-bottom: 1px solid #2c3e50;
+                    margin-bottom: 10px;
+                }
+                
+                .popup-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                
+                .popup-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 13px;
+                    animation: slideIn 0.3s ease-out;
+                }
+                
+                .popup-label {
+                    font-weight: 600;
+                    color: #34495e;
+                    margin-right: 8px;
+                }
+                
+                .popup-value {
+                    color: #0c0d0dff;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                }
+                
+                @keyframes slideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateX(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                }
+                
+                .leaflet-popup-content {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                
+                .leaflet-popup {
+                    animation: popupSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                
+                @keyframes popupSlideUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+                
+                .leaflet-label {
+                    background: rgba(44, 62, 80, 0.9);
+                    color: white;
+                    border-radius: 4px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                    font-weight: 600;
+                    animation: labelFadeIn 0.2s ease-out;
+                }
+                
+                @keyframes labelFadeIn {
+                    from {
+                        opacity: 0;
+                        transform: scale(0.9);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: scale(1);
+                    }
+                }
+                
+                .leaflet-marker-icon:hover {
+                    filter: drop-shadow(0 0 8px rgba(52, 152, 219, 0.6));
+                    transform: scale(1.1);
+                    transition: all 0.2s ease;
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // Add hover effects to circle markers
+            var map = this;
+            var originalRadius = 8;
+            var expandedRadius = 12;
+
+            // Welcome Popup Guide
+            var guideContent = `
+                <div style='font-family: sans-serif; padding: 10px; min-width: 200px;'>
+                    <h1 style='margin-top:0; color: #2c3e50;'>🗺️ Benthic Inventory Dashboard</h1>
+                    <p>Explore integrated ecological data across Tanzania's coastal waters:</p>
+                    <ul style='max-height: 150px; overflow-y: auto; padding-right: 5px;'>
+                        <li><b>Integrated Data:</b> Toggle between <b>Long-term Monitoring Stations</b> and high-resolution <b>BES Grid Points</b> using the layer control.</li>
+                        <li><b>Spatial Navigation:</b> Pan across the coastline and zoom into specific Marine Managed Areas (MMAs) or monitoring zones.</li>
+                        <li><b>Station Search:</b> Use the 🔍 icon to quickly locate specific monitoring sites by name.</li>
+                        <li><b>Ecological Insights:</b> Click any marker to view detailed metrics including coral cover %, bleaching severity, and substrate composition.</li>
+                        <li><b>Environmental Context:</b> Switch between Satellite imagery and Street maps to analyze habitat surroundings.</li>
+                        <li><b>Custom Analysis:</b> Use the drawing toolbar to delineate areas of interest and export coordinates as GeoJSON for external GIS analysis.</li>
+                    </ul>
+                    <hr><small>Developed by: <b>Masumbuko Semba</b> creditied to: Gemini, Claude, and Raptor AI via GitHub Copilot using Positron IDE in R language.</small>
+                </div>`;
+            
+            var guidePopup = L.popup({
+                autoPan: false,
+                className: 'floating-guide'
+            })
+            .setLatLng(map.getCenter())
+            .setContent(guideContent);
+            
+            L.easyButton('fa-info-circle', function(btn, map){
+                guidePopup.openOn(map);
+            }, 'Show Dashboard Guide').addTo(map);
+
+            guidePopup
+                .openOn(map);
+
+            // CSS to make it float and stay fixed during pans
+            var floatStyle = document.createElement('style');
+            floatStyle.textContent = `
+                .floating-guide {
+                    position: fixed !important;
+                    top: 100px !important;
+                    left: 50px !important;
+                    transform: none !important;
+                    z-index: 1000;
+                }
+            `;
+            document.head.appendChild(floatStyle);
+
+            if (map._popup && map._popup._container) {
+                var container = map._popup._container;
+                var draggable = new L.Draggable(container);
+                draggable.enable();
+                container.style.cursor = 'move';
+                draggable.on('drag', function(e) {
+                    container.style.transform = e.target._newPos;
+                });
+            }
+
+            map.on('draw:created', function (e) {
+                drawnItems.addLayer(e.layer);
+            });
+        }
+    ") 
+
+```
+
+
+```{r}
+stations |> 
+    group_by(location, zone) |> 
+    summarize( n = n()) |> 
+    ungroup() |>
+    arrange(zone) |> 
+    add_row(location = 'BES', zone = "OPEN", n = 30) |> 
+    gt::gt()
+```
+
+
+
+```{r}
+stations |> 
+    group_by(location, zone) |> 
+    summarize(sites = paste(station, collapse = ', ')) |> 
+    ungroup() |> 
+    left_join(
+        stations |> 
+            group_by(location, zone) |> 
+            summarize(Total = n()) |> 
+            ungroup()
+    ) |> 
+    arrange(zone) |> 
+    add_row(location = 'BES', zone = "OPEN", Total = 30) |> 
+    gt::gt() |> 
+    gt::cols_width(
+        sites ~ gt::pct(55),
+        everything()~pct(15)
+    ) |> 
+    tab_options(
+        latex.use_longtable = TRUE, 
+        data_row.padding = px(5), 
+        table.font.size = '11pt', 
+        table.width = pct(100)
+    )
+
+```
+
+
+## Benthic Ecological Surveys (BES)
+
+The Benthic Ecological Survey (BES) stations represent a specialized subset of the monitoring network, specifically designed to capture high-resolution data on seafloor composition and health. These surveys utilize standardized transect methodologies to quantify the cover of live coral, macroalgae, and other substrate types. By integrating these detailed biological assessments with the broader spatial data from the monitoring zones, the BES framework provides the empirical evidence necessary to track long-term shifts in community structure and evaluate the resilience of Tanzania's coastal ecosystems against climate-induced stressors.
+
+
+
+## Labelset
+
+```{r}
+labelset = read_csv('labelset.csv')
+
+labelset = labelset |>
+  mutate(
+    ecological_group = case_when(
+      `Functional Group` %in% c("Hard coral") ~ "Live Coral",
+      `Functional Group` %in% c("Seagrass") ~ "Seagrass",
+      `Functional Group` %in% c("Algae", "Other Invertebrates") ~ "Other Biota",
+      `Functional Group` %in% c("Soft Substrate", "Hard Substrate", "Other") ~ "Substrate"
+    )
+  ) 
+
+```
+
+```{r}
+#| label: tbl-labelset2
+#| tbl-cap: Functional and ecological labelset  used to characterize the benthic community and other substralte
+
+
+ labelset  |>
+#   select(Name, `Functional Group`, ecological_group) |>
+  gt() |>
+  opt_row_striping() |>
+  tab_options(
+    latex.use_longtable = TRUE,
+    data_row.padding = px(5),
+    table.font.size = '10pt'
+  ) |> 
+    cols_width(
+        Name ~ '3in'
+    )
+```
+
+
+
+
+```{r}
+bes = read_csv('BES_site_full.csv') |> 
+rename(seascape = Region) |> 
+mutate(
+    seascape = str_replace_all(seascape, 'Mainland_South', 'Mainland'),
+    seascape = str_replace_all(seascape, 'Mainland_North', 'Mainland'),
+    seascape = if_else(seascape == 'Mainland', 'Mainland', 'Zanzibar')
+)
+
+```
+
+
+
+```{r}
+bes_long =  bes |> 
+    select(-1,-2) |> 
+    pivot_longer(
+        cols = 5:21, 
+        names_to = "Short Code", 
+        values_to = 'pct'
+    ) |>
+    left_join(labelset, by = 'Short Code') |>
+    # Extract the numeric part of the image filename
+    mutate(grid = as.integer(str_extract(Image, "\\d+"))) |>
+    # # The filter below is to check for images where the number was not extracted
+    # filter(is.na(grid)) |> 
+    separate(Image, c('Image', 'bb'), sep = -4)|> 
+    separate(Image, c('Image', 'replicate'), sep = -1) |> 
+    mutate(
+        replicate = str_to_upper(replicate),
+        pct = na_if(pct, 0)
+        )
+        
+bes_long_clean = bes_long |>     
+    select(-Image, -bb, -`Functional Group`, -`Short Code`) |> 
+    relocate(grid, .after = seascape) |> 
+    relocate(pct, .after = ecological_group) |> 
+    filter(!is.na(pct))|> 
+janitor::clean_names()
+
+
+```
+
+
+```{r} 
+set.seed(123)
+
+bes_coral_seagrass = bes_long_clean |> 
+  filter(ecological_group %in% c('Live Coral', 'Seagrass')) |>
+  filter(!is.na(longitude )) |> 
+  select(-name)
+
+
+bes_coral_seagrass_sf = bes_coral_seagrass  |> 
+    filter(pct > 95) |> 
+    group_by(seascape, ecological_group) |> 
+    sample_n(12) |> 
+    ungroup() |> 
+    # distinct(ecological_group)
+  st_as_sf(coords = c('longitude', 'latitude'), crs = 4326, remove = FALSE) 
+  
+bes_coral_seagrass_sf|> 
+  mapview::mapview()
+
+
+```
+
+
+## Revised map (Monitoring + BES)
+
+
+```{r}
+pal <- colorFactor(palette = "Set2", domain = stations_sf$zone)
+pal2 <- colorFactor(palette = "Set1", domain = bes_coral_seagrass_sf$ecological_group)
+
+
+map = leaflet() |> 
+    htmlwidgets::onRender("
+        function(el, x) {
+            var map = this;
+            var loginHTML = \`
+                <div style=\"
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.2);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                \" id=\"loginOverlay\">
+                    <div style=\"
+                        background: #ffffff;
+                        border-radius: 12px;
+                        padding: 0;
+                        width: 100%;
+                        max-width: 450px;
+                        box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+                        overflow: hidden;
+                        animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+                    \">
+                        <div style=\"
+                            background: #1a2a3a;
+                            padding: 40px 30px 30px;
+                            text-align: center;
+                            color: white;
+                            border-bottom: 4px solid #00d1b2;
+                        \">
+                            <div style=\"
+                                font-size: 48px;
+                                margin-bottom: 15px;
+                            \">🗺️</div>
+                            <h2 style=\"
+                                margin: 0;
+                                font-size: 28px;
+                                font-weight: 700;
+                                letter-spacing: -0.5px;
+                                color: #00d1b2;
+                            \">Benthic Inventory</h2>
+                            <p style=\"
+                                margin: 8px 0 0 0;
+                                font-size: 14px;
+                                color: #ffffff;
+                                font-weight: 300;
+                            \">Tanzania Benthic Ecosystem Dashboard</p>
+                        </div>
+                        
+                        <div style=\"
+                            background: #ffffff;
+                            padding: 40px 30px;
+                        \">
+                            <div style=\"margin-bottom: 20px;\">
+                                <label style=\"
+                                    display: block;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #1a2a3a;
+                                    margin-bottom: 8px;
+                                    text-transform: uppercase;
+                                    letter-spacing: 1px;
+                                \">Username</label>
+                                <input type=\"text\" id=\"loginUser\" placeholder=\"Enter your username\" style=\"
+                                    width: 100%;
+                                    padding: 12px 15px;
+                                    border: 2px solid #1a2a3a;
+                                    border-radius: 4px;
+                                    font-size: 14px;
+                                    transition: all 0.3s ease;
+                                    box-sizing: border-box;
+                                \" onfocus=\"this.style.borderColor='#00d1b2';\" />
+                            </div>
+                            
+                            <div style=\"margin-bottom: 30px;\">
+                                <label style=\"
+                                    display: block;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #1a2a3a;
+                                    margin-bottom: 8px;
+                                    text-transform: uppercase;
+                                    letter-spacing: 1px;
+                                \">Password</label>
+                                <input type=\"password\" id=\"loginPass\" placeholder=\"Enter your password\" style=\"
+                                    width: 100%;
+                                    padding: 12px 15px;
+                                    border: 2px solid #1a2a3a;
+                                    border-radius: 4px;
+                                    font-size: 14px;
+                                    transition: all 0.3s ease;
+                                    box-sizing: border-box;
+                                \" onfocus=\"this.style.borderColor='#00d1b2';\" />
+                            </div>
+                            
+                            <div style=\"
+                                display: grid;
+                                grid-template-columns: 1fr 1fr;
+                                gap: 12px;
+                            \">
+                                <button id=\"loginBtn\" style=\"
+                                    background: #00d1b2;
+                                    color: white;
+                                    border: none;
+                                    padding: 12px 24px;
+                                    border-radius: 4px;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                    cursor: pointer;
+                                    transition: all 0.3s ease;
+                                    text-transform: uppercase;
+                                    letter-spacing: 0.5px;
+                                \" onmouseover=\"this.style.background='#00b89c'\" onmouseout=\"this.style.background='#00d1b2'\">Sign In</button>
+                                
+                            </div>
+                            
+                            <div style=\"
+                                margin-top: 20px;
+                                padding-top: 20px;
+                                border-top: 2px solid #f0f0f0;
+                                font-size: 12px;
+                                color: #1a2a3a;
+                                line-height: 1.6;
+                            \">
+
+                                    <p style=\"margin: 0 0 8px 0;\"><strong>🔐 Accessing the Tool:</strong></p>
+                                    <p style=\"margin: 5px 0; font-size: 11px; color: #666;\">Please contact the developer to request access credentials.</p>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            \`;
+            document.body.insertAdjacentHTML('beforeend', loginHTML);
+            
+            // Add event listeners for login buttons
+            var loginBtn = document.getElementById('loginBtn');
+            var loginOverlay = document.getElementById('loginOverlay');
+            
+            loginBtn.addEventListener('click', function() {
+                var user = document.getElementById('loginUser').value;
+                var pass = document.getElementById('loginPass').value;
+                
+                var validUsers = {
+                    'semba': '2025',
+                    'asuta': 'asuta',
+                    'user': 'guest'
+                };
+                
+                if (validUsers[user] && validUsers[user] === pass) {
+                    loginOverlay.style.display = 'none';
+                } else if (!user || !pass) {
+                    alert('Please enter both username and password');
+                } else {
+                    alert('Invalid credentials. Please try again.');
+                }
+            });
+        }
+    ") |>
+    addProviderTiles(providers$OpenStreetMap, group = "OSM")  |> 
+    addProviderTiles(providers$Esri.WorldImagery, group = "Satellite")|> 
+    addProviderTiles(providers$CartoDB.Positron, group = "Light") |> 
+    addScaleBar(position = "bottomleft") |>
+    addFullscreenControl() |>
+    addMeasure(
+        position = "bottomleft",
+        primaryLengthUnit = "kilometers", secondaryLengthUnit = "meters",
+        primaryAreaUnit = "sqmeters", secondaryAreaUnit = "hectares",
+        activeColor = "#2c3e50",
+        completedColor = "#e74c3c",
+        localization = "en",
+        captureZIndex = 10000
+        ) |> 
+    addDrawToolbar(
+        targetGroup = "draw",
+        editOptions = editToolbarOptions(edit = TRUE, remove = TRUE),
+        polylineOptions = drawPolylineOptions(),
+        polygonOptions = drawPolygonOptions(),
+        circleOptions = drawCircleOptions(),
+        rectangleOptions = drawRectangleOptions(),
+        markerOptions = drawMarkerOptions(),
+        circleMarkerOptions = drawCircleMarkerOptions()
+        ) |>
+    addMiniMap(tiles = providers$CartoDB.Positron, toggleDisplay = TRUE) |> 
+    addEasyButton(easyButton(
+        icon="fa-crosshairs", title="Locate Me",
+        onClick=JS("function(btn, map){ map.locate({setView: true}); }"))) |> 
+    addEasyButton(easyButton(
+        icon="fa-globe", title="Reset View",
+        onClick=JS("function(btn, map){ map.setView([-6.5, 39.3], 8); }")))  |> 
+    addPolygons(
+        data = zones,
+        fillColor = ~pal(zone),
+        fillOpacity = 0.2,
+        weight = 2,
+        color = "black",
+        label = ~zone,
+        group = "Zones"
+    ) |> 
+    addCircleMarkers( 
+        data = bes_coral_seagrass_sf,
+        fillColor = ~pal2(ecological_group), 
+        group = 'BES',
+        fillOpacity = 0.8,
+        color = "white",
+        weight = 2,
+        radius = 8,
+        label = ~paste("Grid:", grid),
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "3px 8px"),
+            textsize = "15px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header'>BES Grid: ", grid, "</div>",
+            "<div class='popup-content'>",
+            # "<div class='popup-row'><span class='popup-label'>🌊 Seascape:</span> <span class='popup-value'>", seascape, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌿 Group:</span> <span class='popup-value'>", ecological_group, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📊 Coverage:</span> <span class='popup-value'>", round(pct, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🔄 Replicate:</span> <span class='popup-value'>", replicate, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Longitude:</span> <span class='popup-value'>", round(longitude, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Latitude:</span> <span class='popup-value'>", round(latitude, 4), "</span></div>",
+            "<div class='popup-row' style='margin-top:10px; flex-direction:column; align-items:flex-start;'>",
+                "<div style='background:#eee; border-radius:10px; width:100%; height:12px; margin-top:5px;'>",
+                    "<div style='background:#3498db; width:", pct, "%; height:100%; border-radius:10px;'></div>",
+                "</div>",
+            "</div>",
+            "</div></div>"
+        )
+        ) |> 
+    addCircleMarkers( 
+        data = stations_sf,
+        fillColor = ~pal(zone), 
+        group = 'Station',
+        fillOpacity = 0.8,
+        color = "white",
+        weight = 2,
+        radius = 8,
+        label = ~station,
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "3px 8px"),
+            textsize = "15px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header'>", station, "</div>",
+            "<div class='popup-content'>",
+            "<div class='popup-row'><span class='popup-label'>📍 Location:</span> <span class='popup-value'>", location, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🏷️ MMA:</span> <span class='popup-value'>", mma, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌍 Zone:</span> <span class='popup-value'>", zone, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Longitude:</span> <span class='popup-value'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📐 Latitude:</span> <span class='popup-value'>", round(lat, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌡️ Bleaching:</span> <span class='popup-value' style='color:", 
+                case_when(
+                    bleaching_level == "Low" ~ "#27ae60",
+                    bleaching_level == "Moderate" ~ "#f3d912ff",
+                    bleaching_level == "High" ~ "#f8a11fff",
+                    bleaching_level == "Severe" ~ "#e74c3c",
+                    TRUE ~ "#0c0d0dff"
+                ), "; font-weight:bold;'>", bleaching_level, "</span></div>",
+            "<div class='popup-row' style='margin-top:2px; margin-bottom:10px;'>",
+                "<div style='display:flex; width:100%; height:10px; background:#eee; border-radius:4px; overflow:hidden; border:1px solid #ddd;'>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Low", "#27ae60", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Moderate", "#f39c12", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="High", "#e67e22", "#eee"), "; border-right:1px solid white;'></div>",
+                    "<div style='width:25%; background:", ifelse(bleaching_level=="Severe", "#e74c3c", "#eee"), ";'></div>",
+                "</div>",
+            "</div>",
+            "<div class='popup-row' style='margin-top:10px; flex-direction:column; align-items:flex-start;'>",
+                "<span class='popup-label'>🌿 Coral Cover: ", cover_pct, "%</span>",
+                "<div style='background:#eee; border-radius:10px; width:100%; height:12px; margin-top:5px;'>",
+                    "<div style='background:", 
+                        ifelse(cover_pct <= 30, "#e74c3c", 
+                        ifelse(cover_pct <= 70, "#f39c12", "#27ae60")), 
+                        "; width:", cover_pct, "%; height:100%; border-radius:10px;'>",
+                    "</div>",
+                "</div>",
+            "</div>",
+            "</div></div>"
+        )
+    ) |>
+    addLegend(
+        data = stations_sf,
+        pal = pal, 
+        values = ~zone, 
+        title = "Coral Monitoring",
+        position = "bottomright",
+        opacity = 1,
+        group = 'Zones'
+    ) |> 
+    addLegend(
+        data = bes_coral_seagrass_sf,
+        pal = pal2, 
+        values = ~ecological_group, 
+        title = "BES Benthic",
+        position = "bottomright",
+        opacity = 1,
+        group = "BES"
+    ) |> 
+    addLayersControl(
+        baseGroups = c("OSM", "Satellite", "Light"),
+        overlayGroups = c("Station",'BES', "Zones"),
+        options = layersControlOptions(collapsed = FALSE)
+    )  |> 
+    hideGroup(group = c('BES')) |> 
+    addSearchFeatures(
+        targetGroup = "Station",
+        options = searchFeaturesOptions(
+            zoom = 12, 
+            openPopup = TRUE
+        )
+        ) |> 
+    clearSearchFeatures() |>
+    htmlwidgets::onRender("
+        function(el, x) {
+            var map = this;
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            map.on('draw:created', function (e) {
+                drawnItems.addLayer(e.layer);
+            });
+            L.easyButton('fa-download', function(btn, map){
+                var data = drawnItems.toGeoJSON();
+                var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'drawn_polygons.geojson';
+                a.click();
+            }, 'Export Drawn Polygons').addTo(map);
+        }
+    ") |>
+    htmlwidgets::onRender("
+        function(el, x) {
+            var style = document.createElement('style');
+            style.textContent = `
+                .station-popup {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: #ffffff;
+                    border-radius: 8px;
+                    padding: 15px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    min-width: 250px;
+                }
+                
+                .popup-header {
+                    font-size: 30px;
+                    font-weight: bold;
+                    color: #2c3e50;
+                    padding-bottom: 10px;
+                    border-bottom: 1px solid #2c3e50;
+                    margin-bottom: 10px;
+                }
+                
+                .popup-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                
+                .popup-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 13px;
+                    animation: slideIn 0.3s ease-out;
+                }
+                
+                .popup-label {
+                    font-weight: 600;
+                    color: #34495e;
+                    margin-right: 8px;
+                }
+                
+                .popup-value {
+                    color: #0c0d0dff;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                }
+                
+                @keyframes slideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateX(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                }
+                
+                .leaflet-popup-content {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                
+                .leaflet-popup {
+                    animation: popupSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                
+                @keyframes popupSlideUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+                
+                .leaflet-label {
+                    background: rgba(44, 62, 80, 0.9);
+                    color: white;
+                    border-radius: 4px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                    font-weight: 600;
+                    animation: labelFadeIn 0.2s ease-out;
+                }
+                
+                @keyframes labelFadeIn {
+                    from {
+                        opacity: 0;
+                        transform: scale(0.9);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: scale(1);
+                    }
+                }
+                
+                .leaflet-marker-icon:hover {
+                    filter: drop-shadow(0 0 8px rgba(52, 152, 219, 0.6));
+                    transform: scale(1.1);
+                    transition: all 0.2s ease;
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // Add hover effects to circle markers
+            var map = this;
+            var originalRadius = 8;
+            var expandedRadius = 12;
+
+            // Welcome Popup Guide
+            var guideContent = `
+                <div style='font-family: sans-serif; padding: 10px; min-width: 200px;'>
+                    <h1 style='margin-top:0; color: #2c3e50;'>🗺️ Benthic Inventory Dashboard Guide</h1>
+                    <p>Explore integrated ecological data across Tanzania's coastal waters:</p>
+                    <ul style='max-height: 150px; overflow-y: auto; padding-right: 5px;'>
+                        <li><b>Integrated Data:</b> Toggle between <b>Long-term Monitoring Stations</b> and high-resolution <b>BES Grid Points</b> using the layer control.</li>
+                        <li><b>Spatial Navigation:</b> Pan across the coastline and zoom into specific Marine Managed Areas (MMAs) or monitoring zones.</li>
+                        <li><b>Station Search:</b> Use the 🔍 icon to quickly locate specific monitoring sites by name.</li>
+                        <li><b>Ecological Insights:</b> Click any marker to view detailed metrics including coral cover %, bleaching severity, and substrate composition.</li>
+                        <li><b>Environmental Context:</b> Switch between Satellite imagery and Street maps to analyze habitat surroundings.</li>
+                        <li><b>Custom Analysis:</b> Use the drawing toolbar to delineate areas of interest and export coordinates as GeoJSON for external GIS analysis.</li>
+                    </ul>
+                    <hr><small>Developed by: <b>Masumbuko Semba</b> creditied to: Gemini, Claude, and Raptor AI via GitHub Copilot using Positron IDE in R language.</small>
+                </div>`;
+            
+            var guidePopup = L.popup({
+                autoPan: false,
+                className: 'floating-guide'
+            })
+            .setLatLng(map.getCenter())
+            .setContent(guideContent);
+            
+            L.easyButton('fa-info-circle', function(btn, map){
+                guidePopup.openOn(map);
+            }, 'Show Dashboard Guide').addTo(map);
+
+            guidePopup
+                .openOn(map);
+
+            // CSS to make it float and stay fixed during pans
+            var floatStyle = document.createElement('style');
+            floatStyle.textContent = `
+                .floating-guide {
+                    position: fixed !important;
+                    top: 100px !important;
+                    left: 50px !important;
+                    transform: none !important;
+                    z-index: 1000;
+                }
+            `;
+            document.head.appendChild(floatStyle);
+
+            if (map._popup && map._popup._container) {
+                var container = map._popup._container;
+                var draggable = new L.Draggable(container);
+                draggable.enable();
+                container.style.cursor = 'move';
+                draggable.on('drag', function(e) {
+                    container.style.transform = e.target._newPos;
+                });
+            }
+
+            map.on('draw:created', function (e) {
+                drawnItems.addLayer(e.layer);
+            });
+        }
+    ") 
+
+map
+
+map |> htmlwidgets::saveWidget("index.html", selfcontained = T)
+
+```
+
+```{r}
+
+```
