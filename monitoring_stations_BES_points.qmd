@@ -762,6 +762,25 @@ map = leaflet() |>
             \`;
             document.body.insertAdjacentHTML('beforeend', loginHTML);
             
+            // Usability Tracking Function
+            var trackEvent = function(action, user) {
+                var timestamp = new Date().toISOString();
+                var logEntry = { event: action, username: user, time: timestamp, screen: window.innerWidth + 'x' + window.innerHeight };
+                
+                // 1. Local logging for immediate debugging
+                localStorage.setItem('last_session_event', JSON.stringify(logEntry));
+
+                // 2. Remote logging to Google Forms (Developer View)
+                // Replace 'FORM_ID' and 'ENTRY_ID' with your actual Google Form IDs to see results in a Sheet
+                var formUrl = 'https://docs.google.com/forms/d/1TT1BhEwo9IlbOvL-mKkTrKGuEYTz--t1y-_SAzopEVQ/edit#responses';
+                var formData = new FormData();
+                formData.append('entry.123456', user);      // Username field
+                formData.append('entry.789012', action);    // Event type field
+                formData.append('entry.345678', timestamp); // Time field
+                
+                fetch(formUrl, { method: 'POST', mode: 'no-cors', body: formData });
+            };
+
             // Add event listeners for login buttons
             var loginBtn = document.getElementById('loginBtn');
             var loginOverlay = document.getElementById('loginOverlay');
@@ -779,11 +798,18 @@ map = leaflet() |>
                 
                 if (validUsers[user] && validUsers[user] === pass) {
                     loginOverlay.style.display = 'none';
+                    trackEvent('login_success', user);
                 } else if (!user || !pass) {
                     alert('Please enter both username and password');
                 } else {
                     alert('Invalid credentials. Please contact Semba for access.');
                 }
+            });
+
+            // Track when user leaves the dashboard (Logout/Close)
+            window.addEventListener('beforeunload', function() {
+                var user = document.getElementById('loginUser').value || 'unknown';
+                trackEvent('session_end', user);
             });
         }
     ") |>
