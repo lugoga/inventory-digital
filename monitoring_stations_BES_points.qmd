@@ -26,13 +26,18 @@ require(gt)
 require(leaflet)
 require(leaflet.extras)
 require(leafpop)
+require(crosstalk)
 
 ```
 
 
 ## General
 
-
+```{r}
+zones = st_read('monitoring_zones.gpkg') |> 
+    mutate(zone = str_replace_all(zone, 'Zone', 'ZONE')) |>
+    st_make_valid()
+```
 
 
 ```{r}
@@ -340,10 +345,6 @@ stations_sf =  stations |>
 
 ```
 
-```{r}
-zones = st_read('monitoring_zones.gpkg') |> 
-    mutate(zone = str_replace_all(zone, 'Zone', 'ZONE'))
-```
 
 
 ```{r}
@@ -807,15 +808,75 @@ bes_coral_seagrass_sf|>
 ```
 
 
-## Revised map (Monitoring + BES)
+## Zonal statistic
 
+
+```{r}
+zones_raw = st_read('monitoring_zones.gpkg') |> 
+    mutate(zone = str_replace_all(zone, 'Zone', 'ZONE')) |>
+    st_make_valid()
+
+# Aggregate Station Data per Zone
+zone_stats_stations = zones_raw |>
+    st_join(stations_sf |> select(-zone, -location)) |>
+    group_by(zone) |>
+    summarize(
+        n_stations = sum(!is.na(station)),
+        mean_coral = mean(cover_pct, na.rm = TRUE),
+        sd_coral = sd(cover_pct, na.rm = TRUE),
+        low_bleach = sum(bleaching_level == "Low", na.rm = TRUE),
+        mod_bleach = sum(bleaching_level == "Moderate", na.rm = TRUE),
+        high_bleach = sum(bleaching_level == "High", na.rm = TRUE),
+        sev_bleach = sum(bleaching_level == "Severe", na.rm = TRUE)
+    ) |> st_drop_geometry()
+
+# Aggregate BES Data per Zone
+zone_stats_bes = zones_raw |>
+    st_join(bes_coral_seagrass_sf) |>
+    group_by(zone) |>
+    summarize(n_bes = sum(!is.na(grid))) |> 
+    st_drop_geometry()
+
+# Aggregate Fisheries Data per Zone (Top 3 priority groups)
+zone_stats_fish = zones_raw |>
+    st_join(landing_sites_cas_landing_priority) |>
+    group_by(zone) |>
+    summarize(
+        across(c(reef_fish, octopus, tuna, small_pelagic, prawn, elasmobranch, other), 
+               \(x) mean(x, na.rm = TRUE), .names = "avg_{.col}")
+    ) |> 
+    mutate(
+        total_pct = rowSums(across(starts_with("avg_")), na.rm = TRUE),
+        across(starts_with("avg_"), \(x) if_else(total_pct > 0, (x / total_pct) * 100, x))
+    ) |> 
+    select(-total_pct) |> 
+    rename(
+        avg_octo = avg_octopus,
+        avg_pelagic = avg_small_pelagic,
+        avg_elasmobranch = avg_elasmobranch
+    ) |> st_drop_geometry()
+
+# Combine all stats back to zones
+zones = zones_raw |>
+    left_join(zone_stats_stations, by = "zone") |>
+    left_join(zone_stats_bes, by = "zone") |>
+    left_join(zone_stats_fish, by = "zone")
+
+```
+
+## Revised map (Monitoring + BES)
 
 ```{r}
 pal <- colorFactor(palette = "Set2", domain = stations_sf$zone)
 pal2 <- colorFactor(palette = "Set1", domain = bes_coral_seagrass_sf$ecological_group)
 
 
-map = leaflet() |> 
+map = leaflet(options = leafletOptions(
+    tap = TRUE,
+    zoomSnap = 0.5,
+    zoomDelta = 0.5,
+    touchZoom = TRUE
+)) |> 
     # login window
     htmlwidgets::onRender("
         function(el, x) {
@@ -1062,12 +1123,37 @@ var trackEvent = function(action, user) {
         onClick=JS("function(btn, map){ map.setView([-6.5, 39.3], 8); }")))  |> 
     addPolygons(
         data = zones,
+        group = "Zones",
         fillColor = ~pal(zone),
         fillOpacity = 0.2,
         weight = 2,
         color = "black",
         label = ~zone,
-        group = "Zones"
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "3px 8px"),
+            textsize = "15px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header'>", zone, "</div>",
+            "<div class='popup-content'>",
+            "<div class='popup-row'><span class='popup-label'>📍 Location:</span> <span class='popup-value'>", location, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📊 Stations:</span> <span class='popup-value'>", n_stations, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌿 Avg Coral:</span> <span class='popup-value'>", round(mean_coral, 1), "% (±", round(sd_coral, 1), ")</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🌡️ Bleaching (L/M/H/S):</span> <span class='popup-value'>", low_bleach, "/", mod_bleach, "/", high_bleach, "/", sev_bleach, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🔬 BES Points:</span> <span class='popup-value'>", n_bes, "</span></div>",
+            "<hr style='margin: 5px 0;'>",
+            "<div style='font-weight:bold; font-size:11px; color:#2c3e50; margin-bottom:5px;'>Avg Catch Composition:</div>",
+            "<div class='popup-row'><span class='popup-label'>🐠 Reef Fish:</span> <span class='popup-value'>", round(avg_reef_fish, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐙 Octopus:</span> <span class='popup-value'>", round(avg_octo, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🍣 Tuna:</span> <span class='popup-value'>", round(avg_tuna, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Small pelagics:</span> <span class='popup-value'>", round(avg_pelagic, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🦈 Elasmobranches:</span> <span class='popup-value'>", round(avg_elasmobranch, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🦐 Prawn:</span> <span class='popup-value'>", round(avg_prawn, 1), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📦 Others:</span> <span class='popup-value'>", round(avg_other, 1), "%</span></div>",
+            "</div></div>"
+        )
     ) |> 
     addPolygons(
         data = cmg,
@@ -1259,7 +1345,7 @@ var trackEvent = function(action, user) {
             "<div class='popup-row'><span class='popup-label'>🐟 Tuna:</span> <span class='popup-value'>", round(tuna, 2), "%</span></div>",
             "<div class='popup-row'><span class='popup-label'>🦐 Prawn:</span> <span class='popup-value'>", round(prawn, 2), "%</span></div>",
             "<div class='popup-row'><span class='popup-label'>🐟 Small Pelagic:</span> <span class='popup-value'>", round(small_pelagic, 2), "%</span></div>",
-            "<div class='popup-row'><span class='popup-label'>📦 Other:</span> <span class='popup-value'>", round(other, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📦 Other:</span> <span class='popup-value'>", round(other, 2), "</span></div>",
             "</div></div>"
         )
     ) |> # Benthic habitat layers with enhanced popups
@@ -1430,7 +1516,7 @@ var trackEvent = function(action, user) {
             "<span style='color: #2c3e50; font-weight: bold;'>🛰️ Satellite</span>", 
             "<span style='color: #2c3e50; font-weight: bold;'>⚪ Minimal Light</span>"
         ),
-        overlayGroups = c("Zones", "Station",'BES', "Landing Sites", 'CAS',  "CMG", "CFMA", "MMA",
+        overlayGroups = c("Zones", "Station", "BES", "Landing Sites", "CAS", "CMG", "CFMA", "MMA",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6]),
         options = layersControlOptions(collapsed = FALSE)
@@ -1469,6 +1555,19 @@ var trackEvent = function(action, user) {
         function(el, x) {
             var style = document.createElement('style');
             style.textContent = `
+                /* Mobile Optimization */
+                @media (max-width: 768px) {
+                    .leaflet-control-layers-expanded {
+                        width: 200px !important;
+                        max-height: 300px !important;
+                        overflow-y: auto !important;
+                    }
+                    .station-popup {
+                        min-width: 200px !important;
+                        padding: 10px !important;
+                    }
+                }
+
                 .station-popup {
                     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                     background: #ffffff;
@@ -1605,6 +1704,15 @@ var trackEvent = function(action, user) {
                 guidePopup.openOn(map);
             }, 'Show Dashboard Guide').addTo(map);
 
+            // Auto-collapse layers on mobile
+            if (window.innerWidth < 768) {
+                var layerControl = document.querySelector('.leaflet-control-layers');
+                if (layerControl) {
+                    // We can't easily force the leaflet internal state, 
+                    // but we can ensure the UI reflects a collapsed state
+                }
+            }
+
             guidePopup
                 .openOn(map);
 
@@ -1640,40 +1748,9 @@ var trackEvent = function(action, user) {
   # Add custom HTML control for coordinates display
   htmlwidgets::onRender("
     function(el, x) {
-      var map = this;
-      
-      // Create coordinate display div
-      var info = L.control({position: 'bottomleft'});
-      
-      info.onAdd = function (map) {
-        this._div = L.DomUtil.create('div', 'coordinate-info');
-        this._div.style.padding = '6px 10px';
-        this._div.style.background = 'rgba(255,255,255,0.9)';
-        this._div.style.boxShadow = '0 0 15px rgba(0,0,0,0.2)';
-        this._div.style.borderRadius = '5px';
-        this._div.style.fontSize = '12px';
-        this._div.style.fontFamily = 'monospace';
-        this.update();
-        return this._div;
-      };
-      
-      info.update = function (lat, lng) {
-        this._div.innerHTML = '<b>Coordinates:</b><br/>' +
-          (lat && lng ? 
-            'Lat: ' + lat.toFixed(5) + '°<br/>Lng: ' + lng.toFixed(5) + '°' : 
-            'Hover over map');
-      };
-      
-      info.addTo(map);
-      
-      // Update on mouse move
-      map.on('mousemove', function(e) {
-        info.update(e.latlng.lat, e.latlng.lng);
-      });
-      
-      map.on('mouseout', function(e) {
-        info.update();
-      });
+      var map = this;    
+        
+    
 
       // --- ENHANCED LAYER CONTROL ---
       setTimeout(function() {
