@@ -32,6 +32,9 @@ require(leafpop)
 
 ## General
 
+
+
+
 ```{r}
 cfmas = st_read('cfmas_mainland_pemba.gpkg', quiet = TRUE)
 cfmas  = cfmas |> 
@@ -73,16 +76,6 @@ cfma |>
 
 
 ```{r}
-landing_site = st_read('landing_sites.gpkg', quiet = TRUE) |> 
-    select(name = Name, village = Village, district = District) |> 
-    mutate(
-        lon = st_coordinates(geom)[, 1],
-        lat = st_coordinates(geom)[, 2]
-    )
-
-```
-
-```{r}
 mma = st_read('mma.gpkg', quiet = TRUE) |> 
     st_make_valid() |> 
     janitor::clean_names() |> 
@@ -96,6 +89,208 @@ mma = st_read('mma.gpkg', quiet = TRUE) |>
     )
 
 ```
+
+
+
+```{r}
+landing_site = st_read('landing_sites.gpkg', quiet = TRUE) |> 
+    select(name = Name, village = Village, district = District) |> 
+    mutate(
+        lon = st_coordinates(geom)[, 1],
+        lat = st_coordinates(geom)[, 2]
+    )
+
+```
+
+
+```{r}
+cas = cas = read_csv('CAS Data_Indian Ocean_01-01-2016_01-07-2024_supabase_date_clean.csv')
+
+priority = read_csv('catch_priroty_cfmas.csv') |> 
+    select(code, species, local_name, priority) |> 
+    distinct(species, .keep_all = T)
+```
+
+
+```{r}
+priority |> 
+    mutate(species = str_to_sentence(species)) |> 
+    group_by(priority) |> 
+    summarise(species = paste(species, collapse = ', ')) |> 
+    ungroup() |> 
+    gt() |> 
+    cols_width(
+        priority ~ pct(20),
+        species ~ pct(80)    
+    ) |> 
+    cols_label(
+        priority ~ "Priority",
+        species ~ "Species"
+    ) |>
+    tab_style(
+        style = cell_text(style = "italic"), 
+        locations = cells_body(columns = species)
+    ) |> 
+    tab_options(
+        latex.use_longtable = TRUE, 
+        data_row.padding = px(5), 
+        table.font.size = '11pt', 
+        table.width = pct(100)
+    ) |>
+  tab_footnote(
+    footnote = "Scientific names were sourced from catch and effort data in the  eCAS database",
+    locations = cells_column_labels(columns = species)
+  ) |>
+  tab_footnote(
+    footnote = "Priority name were obtained from fisheries expert",
+    locations = cells_column_labels(columns = priority)
+  )
+
+```
+
+
+
+```{r}
+cas_prioriy = cas |> 
+    select(date, region:landing_site, fishing_ground_locality, gear_type, species = type_of_fish_species, code, count, weight, value) |> 
+    left_join(priority) |> 
+    relocate(c(priority, local_name), .after = code) |> 
+    mutate(
+        landing_site = str_to_title(landing_site),
+        weight = as.numeric(str_extract(weight, "\\d+\\.?\\d*"))
+        ) 
+
+cas_landing_tb = cas_prioriy |> 
+    distinct(landing_site) |> 
+    left_join(
+        landing_site |> 
+    st_drop_geometry() |> 
+    select(landing_site = name, lon, lat)
+    ) |> 
+    drop_na() |> 
+    distinct(landing_site, .keep_all = T) 
+    
+cas_landing = cas_landing_tb|> 
+    st_as_sf(coords = c('lon', 'lat'), crs = 4326)
+    
+cas_landing|> 
+    leaflet() |> 
+    addTiles() |> 
+    addCircleMarkers(
+        group = 'Landing site',
+        stroke = TRUE,
+        color = "#03F",
+        weight = 2,
+        opacity = 0.8,
+        fill = TRUE,
+        fillColor = '#03F',
+        fillOpacity = 0.2,
+        dashArray = NULL,
+        label = ~landing_site, 
+        options = pathOptions()
+        )
+
+```
+
+```{r}
+aa = cas_landing |> st_drop_geometry() |> pull(landing_site)
+
+cas_prioriy_catch_compostion = cas_prioriy |> 
+    mutate(priority = if_else(is.na(priority), 'Other', priority))|> 
+    filter(landing_site %in% aa) |> 
+    group_by(landing_site, priority) |> 
+    summarise(        
+        weight = sum(weight, na.rm = T),
+    ) |> 
+    mutate(pct = weight / sum(weight) * 100) |> 
+    ungroup() |> 
+    select(-weight)  |> 
+    pivot_wider(names_from = priority, values_from = pct) 
+    
+cas_prioriy_catch_compostion |> 
+    gt() |> 
+    fmt_number(columns = everything(), decimals = 2) |> 
+    fmt_missing(columns = everything(), missing_text = '--') |> 
+    tab_options(
+        latex.use_longtable = TRUE, 
+        data_row.padding = px(5), 
+        table.font.size = '11pt', 
+        table.width = pct(90)
+    ) |> 
+    cols_label(
+        landing_site ~ "Landing Site"
+    ) |> 
+    data_color(
+        columns = 2:8, 
+        palette = 'Reds', 
+        direction = 'column', 
+        method = 'numeric', 
+        bins = 4
+    )
+
+
+```
+
+
+```{r}
+landing_sites_cas_landing_priority =  cas_landing |> 
+    left_join(cas_prioriy_catch_compostion) |> 
+    mutate(
+        lon  = st_coordinates(geometry)[,1],        
+        lat  = st_coordinates(geometry)[,2]
+    ) |> 
+    janitor::clean_names()
+    
+    
+leaflet() |> 
+    addProviderTiles(providers$OpenStreetMap, group = "OSM") |>
+    addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") |>
+    addProviderTiles(providers$CartoDB.Positron, group = "Light") |>
+    addScaleBar(position = "bottomleft") |>
+    addFullscreenControl() |>
+    addMiniMap(tiles = providers$CartoDB.Positron, toggleDisplay = TRUE, position = "bottomleft") |>
+    addEasyButton(easyButton(
+        icon="fa-crosshairs", title="Locate Me",
+        onClick=JS("function(btn, map){ map.locate({setView: true}); }"))) |>
+    addEasyButton(easyButton(
+        icon="fa-globe", title="Reset View",
+        onClick=JS("function(btn, map){ map.setView([-6.5, 39.3], 8); }"))) |>
+    addCircleMarkers( 
+        data = landing_sites_cas_landing_priority,
+        group = 'CAS',
+        fillOpacity = 0.7,
+        color = "#ffffff",
+        weight = 1.5,
+        radius = 6,
+        fillColor = "#2c3e50",
+        label = ~landing_site,
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "4px 10px", "background-color" = "rgba(44, 62, 80, 0.95)", "border-radius" = "4px"),
+            textsize = "14px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header' style='background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); color: white; padding: 12px;'>⚓ ", landing_site, "</div>",
+            "<div class='popup-content'>" ,
+            "<div class='popup-row'><span class='popup-label'>📍 Longitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📍 Latitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lat, 4), "</span></div>" ,
+            "<hr style='margin: 10px 0; border: none; border-top: 1px solid #eee;'>",
+            "<div class='popup-row'><span class='popup-label'>🦈 Elasmobranch:</span> <span class='popup-value'>", round(elasmobranch, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐙 Octopus:</span> <span class='popup-value'>", round(octopus, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐠 Reef Fish:</span> <span class='popup-value'>", round(reef_fish, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Tuna:</span> <span class='popup-value'>", round(tuna, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🦐 Prawn:</span> <span class='popup-value'>", round(prawn, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Small Pelagic:</span> <span class='popup-value'>", round(small_pelagic, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📦 Other:</span> <span class='popup-value'>", round(other, 2), "%</span></div>",
+            "</div></div>"
+        )
+    )
+
+
+```
+
+
 
 
 ## Allen Coral
@@ -1036,7 +1231,38 @@ var trackEvent = function(action, user) {
             "</div>",
             "</div></div>"
         )
-    )  |> # Benthic habitat layers with enhanced popups
+    )  |> # Priority fishing
+    addCircleMarkers( 
+        data = landing_sites_cas_landing_priority,
+        group = 'CAS',
+        fillOpacity = 0.7,
+        color = "#ffffff",
+        weight = 1.5,
+        radius = 6,
+        fillColor = "#2c3e50",
+        label = ~landing_site,
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "4px 10px", "background-color" = "rgba(255, 255, 255, 0.95)", "border-radius" = "4px"),
+            textsize = "14px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header' style='background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); color: white; padding: 12px;'>⚓ ", landing_site, "</div>",
+            "<div class='popup-content'>" ,
+            "<div class='popup-row'><span class='popup-label'>📍 Longitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📍 Latitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lat, 4), "</span></div>" ,
+            "<hr style='margin: 10px 0; border: none; border-top: 1px solid #eee;'>",
+            "<div class='popup-row'><span class='popup-label'>🦈 Elasmobranch:</span> <span class='popup-value'>", round(elasmobranch, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐙 Octopus:</span> <span class='popup-value'>", round(octopus, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐠 Reef Fish:</span> <span class='popup-value'>", round(reef_fish, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Tuna:</span> <span class='popup-value'>", round(tuna, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🦐 Prawn:</span> <span class='popup-value'>", round(prawn, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Small Pelagic:</span> <span class='popup-value'>", round(small_pelagic, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📦 Other:</span> <span class='popup-value'>", round(other, 2), "%</span></div>",
+            "</div></div>"
+        )
+    ) |> # Benthic habitat layers with enhanced popups
   addPolygons(
     data = benthic_clean |> filter(class == benth_classes[1]),
     group = benth_classes[1], 
@@ -1204,12 +1430,12 @@ var trackEvent = function(action, user) {
             "<span style='color: #2c3e50; font-weight: bold;'>🛰️ Satellite</span>", 
             "<span style='color: #2c3e50; font-weight: bold;'>⚪ Minimal Light</span>"
         ),
-        overlayGroups = c("Zones", "Station",'BES', "Landing Sites",  "CMG", "CFMA", "MMA",
+        overlayGroups = c("Zones", "Station",'BES', "Landing Sites", 'CAS',  "CMG", "CFMA", "MMA",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6]),
         options = layersControlOptions(collapsed = FALSE)
     )  |> 
-    hideGroup(group = c( "Landing Sites",  "CMG", "CFMA", "MMA",
+    hideGroup(group = c( "Landing Sites", "CAS",  "CMG", "CFMA", "MMA",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6])) |> 
     addSearchFeatures(
@@ -1491,7 +1717,7 @@ var trackEvent = function(action, user) {
         }
 
         addHeader('Inventory', '📁', 'Zones');
-        addHeader('Conservation', '🛡️', 'CFMAs');
+        addHeader('Conservation', '🛡️', 'CMG');
         addHeader('Industrial', '🏭', 'Oil & Gas Blocks');
         addHeader('Fisheries', '🎣', 'Landing Sites');
         addHeader('Habitats', '🌿', 'Coral/Algae');
@@ -1528,10 +1754,54 @@ var trackEvent = function(action, user) {
 
 map
 
-map |> htmlwidgets::saveWidget("index.html", selfcontained = T)
+# map |> htmlwidgets::saveWidget("index.html", selfcontained = T)
 
 ```
 
 ```{r}
-
+   
+leaflet() |> 
+    addProviderTiles(providers$OpenStreetMap, group = "OSM") |>
+    addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") |>
+    addProviderTiles(providers$CartoDB.Positron, group = "Light") |>
+    addScaleBar(position = "bottomleft") |>
+    addFullscreenControl() |>
+    addMiniMap(tiles = providers$CartoDB.Positron, toggleDisplay = TRUE, position = "bottomleft") |>
+    addEasyButton(easyButton(
+        icon="fa-crosshairs", title="Locate Me",
+        onClick=JS("function(btn, map){ map.locate({setView: true}); }"))) |>
+    addEasyButton(easyButton(
+        icon="fa-globe", title="Reset View",
+        onClick=JS("function(btn, map){ map.setView([-6.5, 39.3], 8); }"))) |>
+    addCircleMarkers( 
+        data = landing_sites_cas_landing_priority,
+        group = 'CAS',
+        fillOpacity = 0.7,
+        color = "#ffffff",
+        weight = 1.5,
+        radius = 6,
+        fillColor = "#2c3e50",
+        label = ~landing_site,
+        labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "4px 10px", "background-color" = "rgba(44, 62, 80, 0.95)", "border-radius" = "4px"),
+            textsize = "14px",
+            direction = "auto"
+        ),
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header' style='background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); color: white; padding: 12px;'>⚓ ", landing_site, "</div>",
+            "<div class='popup-content'>" ,
+            "<div class='popup-row'><span class='popup-label'>📍 Longitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📍 Latitude:</span> <span class='popup-value' style='font-family: monospace;'>", round(lat, 4), "</span></div>" ,
+            "<hr style='margin: 10px 0; border: none; border-top: 1px solid #eee;'>",
+            "<div class='popup-row'><span class='popup-label'>🦈 Elasmobranch:</span> <span class='popup-value'>", round(elasmobranch, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐙 Octopus:</span> <span class='popup-value'>", round(octopus, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐠 Reef Fish:</span> <span class='popup-value'>", round(reef_fish, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟 Tuna:</span> <span class='popup-value'>", round(tuna, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🦐 Prawn:</span> <span class='popup-value'>", round(prawn, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>🐟🐟 Small Pelagic:</span> <span class='popup-value'>", round(small_pelagic, 2), "%</span></div>",
+            "<div class='popup-row'><span class='popup-label'>📦 Other:</span> <span class='popup-value'>", round(other, 2), "%</span></div>",
+            "</div></div>"
+        )
+    )
 ```
