@@ -1054,8 +1054,8 @@ var trackEvent = function(action, user) {
                 
                 var validUsers = {
                     'semba': 'semba',
-                    'asuta': 'asuta',
-                    'tnc': 'tnc',
+                    'asuta': 'asuta2026',
+                    'tnc': 'tnc2026',
                     'user': 'guest'
                 };
                 
