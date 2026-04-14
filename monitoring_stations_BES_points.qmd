@@ -26,9 +26,57 @@ require(gt)
 require(leaflet)
 require(leaflet.extras)
 require(leafpop)
+require(osmdata)
 require(crosstalk)
 
 ```
+
+
+## Tourism Infrastructure (Unguja)
+
+This section extracts hotel and accommodation data from OpenStreetMap for Unguja Island.
+
+```{r}
+#| eval: false
+#| 
+# Define the bounding box for Unguja
+unguja_bbox <- c(39.1, -6.5, 39.6, -5.7)
+
+# Query OSM for hotels (polygons and points)
+hotels_osm <- opq(bbox = unguja_bbox) |>
+  add_osm_feature(key = 'tourism', value = 'hotel') |>
+  osmdata_sf()
+
+# Extract points and polygons
+hotel_points <- hotels_osm$osm_points |> 
+  select(name, geometry) |> 
+  filter(!is.na(name))
+
+hotel_polygons <- hotels_osm$osm_polygons |> 
+  select(name, geometry)
+
+# Map visualization
+leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  addPolygons(data = hotel_polygons, color = "red", group = "Hotel Polygons", label = ~name) |>
+  addCircleMarkers(data = hotel_points, color = "blue", radius = 3, group = "Hotel Points", label = ~name) |>
+  addLayersControl(overlayGroups = c("Hotel Polygons", "Hotel Points"), options = layersControlOptions(collapsed = FALSE))
+
+# Export functions (Uncomment to save locally)
+# st_write(hotel_points, "unguja_hotels_points.gpkg", append = FALSE)
+# st_write(hotel_polygons, "unguja_hotels_polygons.gpkg", append = FALSE)
+```
+
+
+```{r}
+unguja_hotels = st_read('unguja_hotels_points.gpkg') |> 
+    mutate(
+        lon = st_coordinates(geom)[,1],
+        lat = st_coordinates(geom)[,2],
+        type = if_else(str_detect(name, "Hotel | Resort"), "Hotel/Resort", "Other Accommodation")
+        )
+```
+
 
 
 ## General
@@ -1213,6 +1261,25 @@ var trackEvent = function(action, user) {
         ),
         group = "MMA"
     ) |> 
+    addCircleMarkers(
+        data = unguja_hotels,
+        group = "Hotels",
+        fillColor = "#e67e22",
+        fillOpacity = 0.8,
+        color = "white",
+        weight = 1,
+        radius = 5,
+        label = ~name,
+        popup = ~paste0(
+            "<div class='station-popup'>",
+            "<div class='popup-header'>", name, "</div>",
+            "<div class='popup-content'>",
+             "<div class='popup-row'><span class='popup-label'>Type:</span> <span class='popup-value'>", type, "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>Lon:</span> <span class='popup-value'>", round(lon, 4), "</span></div>",
+            "<div class='popup-row'><span class='popup-label'>Lat:</span> <span class='popup-value'>", round(lat, 4), "</span></div>",
+            "</div></div>"
+        )
+    ) |>
     addCircleMarkers( 
         data = bes_coral_seagrass_sf,
         fillColor = ~pal2(ecological_group), 
@@ -1516,12 +1583,12 @@ var trackEvent = function(action, user) {
             "<span style='color: #2c3e50; font-weight: bold;'>🛰️ Satellite</span>", 
             "<span style='color: #2c3e50; font-weight: bold;'>⚪ Minimal Light</span>"
         ),
-        overlayGroups = c("Zones", "Station", "BES", "Landing Sites", "CAS", "CMG", "CFMA", "MMA",
+        overlayGroups = c("Zones", "Station", "BES", "Landing Sites", "CAS", "Hotels", "CMG", "CFMA", "MMA",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6]),
         options = layersControlOptions(collapsed = FALSE)
     )  |> 
-    hideGroup(group = c( "Landing Sites", "CAS",  "CMG", "CFMA", "MMA",
+    hideGroup(group = c( "Landing Sites", "CAS", "Hotels", "CMG", "CFMA", "MMA",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6])) |> 
     addSearchFeatures(
@@ -1881,4 +1948,9 @@ leaflet() |>
             "</div></div>"
         )
     )
+```
+
+
+```{r}
+
 ```
