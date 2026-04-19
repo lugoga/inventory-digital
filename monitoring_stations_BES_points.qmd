@@ -31,7 +31,7 @@ require(crosstalk)
 
 ```
 
-
+# Data
 ## Tourism Infrastructure (Unguja)
 
 This section extracts hotel and accommodation data from OpenStreetMap for Unguja Island.
@@ -347,6 +347,48 @@ leaflet() |>
 
 
 ## Allen Coral
+
+
+```{r}
+#| eval: false
+#| 
+unguja_north = st_read('../unguja_north_benthic.geojson')
+
+sf_use_s2(FALSE)
+
+unguja_north = unguja_north |> 
+ group_by(class) |> 
+ summarise(geometry = st_union(geometry)) |> 
+ mutate(
+    area_km2 = as.numeric(st_area(geometry)) / 1e6,
+    area_ha = as.numeric(st_area(geometry)) / 1e4
+ )
+#   |> 
+#  st_simplify(dTolerance = 0.0001, preserveTopology = TRUE) 
+
+#  unguja_north |> st_write('unguja_north_benthic.gpkg', append = FALSE)
+
+sf_use_s2(TRUE)
+```
+
+
+
+```{r}
+ unguja_north = st_read('unguja_north_benthic.gpkg', quiet = TRUE)
+
+benthic_colors_un <- c(
+  "Coral/Algae" = "#ff6161",
+  "Microalgal Mats" = "#9bcc4f", 
+  "Rock" = "#b19c3a",
+  "Rubble" = "#e0d05e", 
+  "Sand" = "#ffffbe", 
+  "Seagrass" = "#668438"
+)
+
+ pal_benth_un <- colorFactor(palette = benthic_colors_un, domain = unguja_north$class) 
+
+```
+
 
 ```{r}
  benthic_clean =  st_read('allen_benthic_simplified_mapshaper.gpkg', quiet = T)
@@ -749,7 +791,7 @@ The Benthic Ecological Survey (BES) stations represent a specialized subset of t
 
 
 
-## Labelset
+### Labelset
 
 ```{r}
 labelset = read_csv('labelset.csv')
@@ -787,7 +829,7 @@ labelset = labelset |>
 
 
 
-
+### BES Data
 ```{r}
 bes = read_csv('BES_site_full.csv') |> 
 rename(seascape = Region) |> 
@@ -858,7 +900,6 @@ bes_coral_seagrass_sf|>
 
 ## Zonal statistic
 
-
 ```{r}
 zones_raw = st_read('monitoring_zones.gpkg') |> 
     mutate(zone = str_replace_all(zone, 'Zone', 'ZONE')) |>
@@ -912,6 +953,7 @@ zones = zones_raw |>
 
 ```
 
+# Mapping
 ## Revised map (Monitoring + BES)
 
 ```{r}
@@ -1547,6 +1589,28 @@ var trackEvent = function(action, user) {
         "</div></div>"
     ),
     highlightOptions = highlightOptions(weight = 2, fillOpacity = 0.9)
+  )  |> # Benthic habitat layers with enhanced popups
+  addPolygons(
+    data = unguja_north,
+    fillColor = ~pal_benth_un(class),
+    group = "Unguja North",
+    stroke = TRUE,
+    color = "#ffffff",
+    weight = 0.5,
+    opacity = 0.3,
+    fillOpacity = 1.0,
+    smoothFactor = 1,
+    popup = ~paste0(
+        "<div class='station-popup'>",
+        "<div class='popup-header'>", class, "</div>",
+         "<div class='popup-content'>",
+        # "<div class='popup-row'><span class='popup-label'>Type:</span> <span class='popup-value'>", 'Benthic Habitat', "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Unguja North:</span> <span class='popup-value'>", 'Tanzania', "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Area (km²):</span> <span class='popup-value'>", round(area_km2, 2), "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Area (ha):</span> <span class='popup-value'>", round(area_ha, 2), "</span></div>",
+        "</div></div>"
+    ),
+    highlightOptions = highlightOptions(weight = 2, fillOpacity = 0.9)
   ) |>
     addLegend(
         data = stations_sf,
@@ -1576,14 +1640,23 @@ var trackEvent = function(action, user) {
     opacity = 0.95,
     labFormat = labelFormat(prefix = ""),
     className = "info legend benthic-legend"
-  )  |> 
+  )  |> # legend for allen colar for Unguja North
+  addLegend(
+    data = unguja_north,
+    pal = pal_benth_un, 
+    group =  "Unguja North",
+    values = unguja_north$class, 
+    title = "Unguja North", 
+    position = "bottomright", 
+    opacity = 1
+  ) |> 
     addLayersControl(
         baseGroups = c(
             "<span style='color: #2c3e50; font-weight: bold;'>🗺️ Street Map</span>", 
             "<span style='color: #2c3e50; font-weight: bold;'>🛰️ Satellite</span>", 
             "<span style='color: #2c3e50; font-weight: bold;'>⚪ Minimal Light</span>"
         ),
-        overlayGroups = c("Zones", "Station", "BES", "Landing Sites", "CAS", "Hotels", "CMG", "CFMA", "MMA",
+        overlayGroups = c("Zones", "Station", "BES", "Landing Sites", "CAS", "Hotels", "CMG", "CFMA", "MMA", "Unguja North",
       benth_classes[1], benth_classes[2], benth_classes[3], 
       benth_classes[4], benth_classes[5], benth_classes[6]),
         options = layersControlOptions(collapsed = FALSE)
@@ -1864,7 +1937,7 @@ var trackEvent = function(action, user) {
         addHeader('Conservation', '🛡️', 'CMG');
         addHeader('Industrial', '🏭', 'Oil & Gas Blocks');
         addHeader('Fisheries', '🎣', 'Landing Sites');
-        addHeader('Habitats', '🌿', 'Coral/Algae');
+        addHeader('Habitats', '🌿', 'Unguja North');
         addHeader('Analysis', '📊', 'Scenario');
       }, 100);
 
@@ -1954,3 +2027,95 @@ leaflet() |>
 ```{r}
 
 ```
+
+
+```{r}
+unguja_north = st_read('unguja_north_benthic.geojson')
+```
+
+
+
+```{r}
+#| eval: false
+#| 
+unguja_north = st_read('unguja_north_benthic.geojson')
+
+sf_use_s2(FALSE)
+
+unguja_north = unguja_north |> 
+ group_by(class) |> 
+ summarise(geometry = st_union(geometry)) |> 
+ mutate(
+    area_km2 = as.numeric(st_area(geometry)) / 1e6,
+    area_ha = as.numeric(st_area(geometry)) / 1e4
+ )
+#   |> 
+#  st_simplify(dTolerance = 0.0001, preserveTopology = TRUE) 
+
+#  unguja_north |> st_write('unguja_north_benthic.gpkg', append = FALSE)
+
+sf_use_s2(TRUE)
+```
+
+
+
+```{r}
+ unguja_north = st_read('unguja_north_benthic.gpkg', quiet = TRUE)
+
+benthic_colors_un <- c(
+  "Coral/Algae" = "#ff6161",
+  "Microalgal Mats" = "#9bcc4f", 
+  "Rock" = "#b19c3a",
+  "Rubble" = "#e0d05e", 
+  "Sand" = "#ffffbe", 
+  "Seagrass" = "#668438"
+)
+
+ pal_benth_un <- colorFactor(palette = benthic_colors_un, domain = unguja_north$class) 
+
+```
+
+```{r}
+
+
+leaflet() |> 
+    addTiles() |> # Benthic habitat layers with enhanced popups
+  addPolygons(
+    data = unguja_north,
+    fillColor = ~pal_benth_un(class),
+    group = "Unguja North",
+    stroke = TRUE,
+    color = "#ffffff",
+    weight = 0.5,
+    opacity = 0.3,
+    fillOpacity = 1.0,
+    smoothFactor = 1,
+    popup = ~paste0(
+        "<div class='station-popup'>",
+        "<div class='popup-header'>", class, "</div>",
+         "<div class='popup-content'>",
+        # "<div class='popup-row'><span class='popup-label'>Type:</span> <span class='popup-value'>", 'Benthic Habitat', "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Unguja North:</span> <span class='popup-value'>", 'Tanzania', "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Area (km²):</span> <span class='popup-value'>", round(area_km2, 2), "</span></div>",
+        "<div class='popup-row'><span class='popup-label'>Area (ha):</span> <span class='popup-value'>", round(area_ha, 2), "</span></div>",
+        "</div></div>"
+    ),
+    highlightOptions = highlightOptions(weight = 2, fillOpacity = 0.9)
+  ) |>
+  addLayersControl(
+    baseGroups = c("OSM"),
+    overlayGroups = c("Unguja North"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |> # legend for allen colar for Unguja North
+  addLegend(
+    data = unguja_north,
+    pal = pal_benth_un, 
+    group =  "Unguja North",
+    values = unguja_north$class, 
+    title = "Unguja North", 
+    position = "bottomright", 
+    opacity = 1
+  )
+```
+
+
